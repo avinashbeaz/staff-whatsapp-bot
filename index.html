@@ -248,6 +248,9 @@
             color: var(--success);
         }
 
+        .badge-transferred { background: #dbeafe; color: #1d4ed8; }
+        .badge-cancel { background: #fee2e2; color: #b91c1c; }
+
         /* Result details card */
         .member-details {
             border: 1px solid var(--border);
@@ -551,6 +554,8 @@
                                 <label for="formStatus">Status</label>
                                 <select id="formStatus">
                                     <option value="Pending">Pending</option>
+                                    <option value="Transferred">Transferred</option>
+                                    <option value="Cancel">Cancel</option>
                                     <option value="Loan Adjustment">Loan Adjustment</option>
                                 </select>
                             </div>
@@ -599,6 +604,8 @@
                         <option value="ALL">All Statuses</option>
                         <option value="Loan Adjustment">Loan Adjustment</option>
                         <option value="Pending">Pending</option>
+                        <option value="Transferred">Transferred</option>
+                        <option value="Cancel">Cancel</option>
                     </select>
                 </div>
 
@@ -780,10 +787,7 @@
                 document.getElementById('resMemberNo').textContent = record["Member Number"] || "-";
                 document.getElementById('resDate').textContent = record["Date"] || "-";
                 
-                const isLoan = record["Status"] === "Loan Adjustment";
-                document.getElementById('resStatusBadge').innerHTML = isLoan ? 
-                    '<span class="badge badge-loan">Loan Adjustment</span>' : 
-                    '<span class="badge badge-pending">Pending</span>';
+                document.getElementById('resStatusBadge').innerHTML = statusBadge(record["Status"] || "Pending");
 
                 document.getElementById('resReceiptNo').textContent = record["Receipt No."] || "-";
                 const amt = record["Amount"] ? ("₹" + Number(record["Amount"]).toLocaleString('en-IN')) : "-";
@@ -870,6 +874,15 @@
             }
         }
 
+        function statusBadge(status) {
+            const allowed = ["Cancel", "Pending", "Transferred", "Loan Adjustment"];
+            const safeStatus = allowed.includes(status) ? status : "Pending";
+            const cssClass = safeStatus === "Loan Adjustment" ? "badge-loan" :
+                safeStatus === "Transferred" ? "badge-transferred" :
+                safeStatus === "Cancel" ? "badge-cancel" : "badge-pending";
+            return `<span class="badge ${cssClass}">${safeStatus}</span>`;
+        }
+
         // Directory Table
         function filterTable() {
             const query = document.getElementById('tableFilterInput').value.toLowerCase().trim();
@@ -903,10 +916,7 @@
                 const row = filteredData[i];
                 const tr = document.createElement('tr');
                 
-                const isLoan = row["Status"] === "Loan Adjustment";
-                const badge = isLoan ? 
-                    '<span class="badge badge-loan">Loan Adjustment</span>' : 
-                    '<span class="badge badge-pending">Pending</span>';
+                const badge = statusBadge(row["Status"] || "Pending");
 
                 const formattedAmt = row["Amount"] ? ("₹" + Number(row["Amount"]).toLocaleString('en-IN')) : "-";
 
