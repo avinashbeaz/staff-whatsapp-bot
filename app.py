@@ -3,11 +3,12 @@ import json
 import hmac
 import hashlib
 import logging
+import shutil
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify, make_response
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -28,11 +29,85 @@ ALLOWED_SENDERS = {
 }
 
 def load_records():
+    # If DATA_FILE points to a newly mounted Railway Volume, seed it once
+    # from the repository's bundled staff_data.json on first access.
+    if not DATA_FILE.exists():
+        bundled_file = Path("staff_data.json")
+        if bundled_file.exists() and bundled_file.resolve() != DATA_FILE.resolve():
+            DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(bundled_file, DATA_FILE)
     with DATA_FILE.open("r", encoding="utf-8") as file:
         records = json.load(file)
     if not isinstance(records, list):
         raise ValueError("staff_data.json must contain a JSON array")
     return records
+
+def save_records(records):
+    """Atomically replace the shared staff register."""
+    if not isinstance(records, list):
+        raise ValueError("Records must be a JSON array")
+    required = {"Sl. No.", "Name", "Staff Number"}
+    seen_serials = set()
+    cleaned = []
+    for row in records:
+        if not isinstance(row, dict) or not required.issubset(row.keys()):
+            raise ValueError("Every record must include Sl. No., Name and Staff Number")
+        serial = str(row.get("Sl. No.", "")).strip()
+        if not serial or serial in seen_serials:
+            raise ValueError("Serial numbers must be present and unique")
+        seen_serials.add(serial)
+        cleaned.append({
+            "Sl. No.": serial,
+            "Name": str(row.get("Name", "")).strip(),
+            "Staff Number": str(row.get("Staff Number", "")).strip(),
+            "Member Number": str(row.get("Member Number", "") or "").strip(),
+            "Date": str(row.get("Date", "") or "").strip(),
+            "Status": str(row.get("Status", "Pending") or "Pending").strip(),
+            "Receipt No.": str(row.get("Receipt No.", "") or "").strip(),
+            "Amount": str(row.get("Amount", "") or "").strip(),
+        })
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = DATA_FILE.with_suffix(DATA_FILE.suffix + ".tmp")
+    with temp_file.open("w", encoding="utf-8") as file:
+        json.dump(cleaned, file, ensure_ascii=False, indent=2)
+    temp_file.replace(DATA_FILE)
+    return cleaned
+
+@app.after_request
+def add_cors_headers(response):
+    # Public GitHub Pages frontend. This intentionally allows any website to call the API.
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, PUT, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+@app.route("/api/records", methods=["GET", "PUT", "OPTIONS"])
+def api_records():
+    if request.method == "OPTIONS":
+        return make_response("", 204)
+    if request.method == "GET":
+        try:
+            records = load_records()
+            return jsonify({"ok": True, "count": len(records), "records": records})
+        except Exception:
+            logging.exception("Could not read staff register through API")
+            return jsonify({"ok": False, "error": "Could not read staff register"}), 500
+    payload = request.get_json(silent=True)
+    records = payload.get("records") if isinstance(payload, dict) else None
+    try:
+        saved = save_records(records)
+        logging.warning("Staff register overwritten through public dashboard API; records=%d", len(saved))
+        return jsonify({"ok": True, "count": len(saved), "message": "Staff register saved to Railway"})
+    except (ValueError, TypeError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception:
+        logging.exception("Could not save staff register through API")
+        return jsonify({"ok": False, "error": "Could not save staff register"}), 500
+
+@app.get("/api/health")
+def api_health():
+    return jsonify({"ok": True, "service": "staff-whatsapp-bot", "api": "online"})
 
 def normalize_staff_number(value):
     return "".join(ch for ch in str(value).strip() if ch.isdigit())
