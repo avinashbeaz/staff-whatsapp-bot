@@ -104,6 +104,7 @@ def send_whatsapp_message(recipient, message):
     if not response.ok:
         logging.error("WhatsApp API error %s: %s", response.status_code, response.text)
     response.raise_for_status()
+    logging.info("WhatsApp reply accepted by Graph API")
 
 def handle_incoming_message(message):
     sender = str(message.get("from", "")).replace("+", "")
@@ -112,7 +113,7 @@ def handle_incoming_message(message):
 
     # This is a private staff lookup bot. Ignore unapproved senders.
     if ALLOWED_SENDERS and sender not in ALLOWED_SENDERS:
-        logging.warning("Ignored message from non-allowlisted sender")
+        logging.warning("Ignored message from non-allowlisted sender (sender suffix=%s)", sender[-4:])
         return
 
     if message.get("type") != "text":
@@ -169,6 +170,7 @@ def verify_webhook():
 
 @app.post("/webhook")
 def receive_webhook():
+    logging.info("Meta webhook POST received")
     raw_body = request.get_data()
     if not verify_meta_signature(raw_body):
         return "Invalid signature", 403
@@ -178,7 +180,13 @@ def receive_webhook():
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                for message in value.get("messages", []):
+                messages = value.get("messages", [])
+                if messages:
+                    logging.info("Webhook contains %d incoming message(s)", len(messages))
+                else:
+                    logging.info("Webhook received with no incoming messages (possibly a status update or test event)")
+                for message in messages:
+                    logging.info("Processing incoming WhatsApp message; type=%s", message.get("type", "unknown"))
                     handle_incoming_message(message)
     except Exception:
         # Return 200 so Meta does not endlessly retry malformed/failed events.
